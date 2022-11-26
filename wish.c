@@ -1,72 +1,123 @@
 #include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
 #include <unistd.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#define MAX_LEN 80
-#define MAX_BUFF_SIZE 1024
-#define MAX_WORDS 100
-#define MAX_PATHS 20 
+#include <stdlib.h>
+#include <string.h>
+#define BUFF_SIZE 1000
+#define MAX_LIST 100
+#define MAX_COM 10
+
+char error_message[30] = "An error has occurred\n";
+
+int take_input(char *string) {
+    char *buffer;
+    buffer = (char *) malloc(BUFF_SIZE);
+    size_t buff_size = BUFF_SIZE;
+    if (getline(&buffer, &buff_size, stdin) != -1) {
+        buffer[strlen(buffer) - 1] = '\0';
+        strcpy(string, buffer);
+        free(buffer);
+        return 0;
+    }
+    else {
+        return 1;
+    }
+}
+
+void built_in_functions(char **commands) {
+    if (strcmp(commands[0], "exit") == 0) {                                                          
+        exit(0);                                                                                        
+    }                                                                                                   
+    else if (strcmp(commands[0], "cd") == 0) {                                                       
+        if (commands[1] == NULL) {                                                                       
+            write(STDERR_FILENO, error_message, strlen(error_message));
+        }                                                                                               
+        chdir(commands[1]);
+        return 1;
+    }                                                                                                   
+    else if (strcmp(commands[0], "path") == 0) {                                                     
+        for (int i = 1; i < commands[i] != NULL; i++) {                                                       
+            searchPath[i] = commands[i];                                                         
+        }                                                                                               
+        return 1;
+    } 
+    return 0;
+}
+
+void exec_command(char **command) {
+    pid_t child;
+    child = fork();
+    if (child == 0) {
+        execvp(command[0], command);
+        write(STDERR_FILENO, error_message, strlen(error_message));
+    }
+}
+
+int command_handler(char *parsedParallel[MAX_COM][MAX_LIST]) {
+    for (int i = 0; i < parsedParallel; i++) {
+        if (!built_in_functions(parsedParallel[i])) {
+            exec_command(parsedParallel[i]);
+        }
+    } 
+}
+
+int parse_parallel(char *string, char **parallelCommands) {
+    char *token;
+    int i = 0;
+    while ((token = strsep(&string, "&"))) {
+        if (strlen(token) == 0) {
+            continue;
+        }
+        parallelCommands[i++] = token;
+    }
+    
+    return i;
+}
+
+void parse_spaces(char *command, char **parsedCommand) {
+    char *token;
+    int i = 0;
+    while ((token = strsep(&command, " "))) {
+        if (strlen(token) == 0)
+            continue;
+        parsedCommand[i++] = token;
+    }
+    parsedCommand[i] = NULL;
+}
+
+void redirect_to_file(char *file) {
+    freopen(file, "w", stdout);
+    freopen(file, "w", stderr);
+
+}
+
+void redirect_to_stdout() {
+    freopen("/dev/tty", "w", stdout);
+    freopen("/dev/tty", "w", stderr);
+}
+
+int process_string(char *string, char *parsedParallel[MAX_COM][MAX_LIST]) {
+    char *stringParallel[MAX_LIST];
+    int parallel = parse_parallel(string, stringParallel);
+    if (parallel) {
+        for (int i = 0; i < parallel; i++) {
+            parse_spaces(stringParallel[i], parsedParallel[i]);
+        }
+    }
+    return 0;
+}
 
 int main(int argc, char *argv[]) {
-    char *buffer, *token, *command[MAX_LEN], *searchPath[MAX_LEN];
-    searchPath[0] = "/bin/";
-    size_t bufsize = MAX_BUFF_SIZE;
-    int wordsInCommand, searchPathLen = 1;
-    pid_t child;
-    buffer = (char *) malloc(bufsize);
+    char inputString[BUFF_SIZE], *parsedParallel[MAX_COM][MAX_LIST];
     printf("wish> ");
-    while (getline(&buffer, &bufsize, stdin) != -1) {
-        wordsInCommand = 0;
-        buffer[strlen(buffer) - 1] = '\0';
-        while ((token = strsep(&buffer, " "))) {
-            command[wordsInCommand++] = token; 
+    while (1) {
+        if (take_input(inputString)) {
+            continue;
         }
-        command[wordsInCommand] = NULL;
-        if (strcmp(command[0], "exit") == 0) {
-            exit(0);
-        }
-        else if (strcmp(command[0], "cd") == 0) {
-            if (wordsInCommand < 2) {
-                fprintf(stderr, "usage: cd <path-to_dir>\n");
-            }
-            chdir(command[1]);
-        }
-        else if (strcmp(command[0], "path") == 0) {
-            searchPathLen = wordsInCommand - 1;
-            for (int i = 0; i < searchPathLen; i++) {
-                searchPath[i] = command[i + 1];
-            }
-        }
-        else {
-            child = fork();
-            if (child == 0) {
-                for (int i = 0; i < searchPathLen; i++) {
-                    char path[MAX_LEN];
-                    strcpy(path, searchPath[i]);
-                    strcat(path, command[0]);
-                    command[0] = path;
-                    if (access(command[0], X_OK) == 0) {
-                        break;
-                    }
-                }
-                if (wordsInCommand > 2 && strcmp(command[wordsInCommand - 2], ">") == 0) {
-                    freopen(command[wordsInCommand - 1], "w", stdout);
-                    freopen(command[wordsInCommand - 1], "w", stderr);
-                    command[wordsInCommand - 2] = NULL;
-                }
-                execv(command[0], command);
-                fprintf(stderr, "The command %s failed to exexcute.\n", command[0]);
-            }
-            else if (child > 0) {
-                waitpid(child, NULL, 0);
-            }
-            freopen("/dev/tty", "w", stdout);
-            freopen("/dev/tty", "w", stderr);
-        }
+        process_string(inputString, parsedParallel);
+        command_handler(parsedParallel);
+        while (wait(NULL) > 0);
         printf("wish> ");
     }
-    free(buffer);
-    exit(0);
 }
