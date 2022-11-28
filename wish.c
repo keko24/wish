@@ -9,6 +9,8 @@
 #define MAX_COM 10
 
 char error_message[30] = "An error has occurred\n";
+char searchPath[MAX_COM][MAX_LIST] = {"/bin/"};
+int searchPathLength = 1;
 
 int take_input(char *string) {
     char *buffer;
@@ -25,7 +27,17 @@ int take_input(char *string) {
     }
 }
 
-void built_in_functions(char **commands) {
+void redirect_to_file(char *file) {
+    freopen(file, "w", stdout);
+    freopen(file, "w", stderr);
+}
+
+void redirect_to_stdout() {
+    freopen("/dev/tty", "w", stdout);
+    freopen("/dev/tty", "w", stderr);
+}
+
+int built_in_functions(char **commands) {
     if (strcmp(commands[0], "exit") == 0) {                                                          
         exit(0);                                                                                        
     }                                                                                                   
@@ -37,9 +49,11 @@ void built_in_functions(char **commands) {
         return 1;
     }                                                                                                   
     else if (strcmp(commands[0], "path") == 0) {                                                     
-        for (int i = 1; i < commands[i] != NULL; i++) {                                                       
-            searchPath[i] = commands[i];                                                         
+        int i;
+        for (i = 1; commands[i] != NULL; i++) {                                                       
+            strcpy(searchPath[i - 1], commands[i]);
         }                                                                                               
+        searchPathLength = i - 2;
         return 1;
     } 
     return 0;
@@ -49,15 +63,46 @@ void exec_command(char **command) {
     pid_t child;
     child = fork();
     if (child == 0) {
-        execvp(command[0], command);
+        execv(command[0], command);
         write(STDERR_FILENO, error_message, strlen(error_message));
     }
 }
 
-int command_handler(char *parsedParallel[MAX_COM][MAX_LIST]) {
-    for (int i = 0; i < parsedParallel; i++) {
+void command_handler(char *parsedParallel[MAX_COM][MAX_LIST], int parallel) {
+    for (int i = 0; i < parallel; i++) {
         if (!built_in_functions(parsedParallel[i])) {
-            exec_command(parsedParallel[i]);
+            char path[MAX_LIST];
+            int j;
+            for (j = 0; searchPathLength; j++) {
+                strcpy(path, searchPath[j]);
+                strcat(path, parsedParallel[i][0]);
+                if (!access(path, X_OK)) { 
+                    parsedParallel[i][0] = path;
+                    break;
+                }
+            }
+            int check = -1, k;
+            for (k = 0; parsedParallel[i][k] != NULL; k++) {
+                if (strcmp(parsedParallel[i][k], ">") == 0) {
+                    check = k;
+                }
+                else if (check != -1 && k > check + 1) {
+                    check = -2;
+                    break; 
+                }
+            }
+            if (check == -2 || searchPathLength <= j) {
+                write(STDERR_FILENO, error_message, strlen(error_message));
+            }
+            else if (check > - 1) {
+                parsedParallel[i][check] = NULL;
+                redirect_to_file(parsedParallel[i][k - 1]);
+                exec_command(parsedParallel[i]);
+                redirect_to_stdout();
+            }
+            else {
+                exec_command(parsedParallel[i]);
+            }
         }
     } 
 }
@@ -71,14 +116,13 @@ int parse_parallel(char *string, char **parallelCommands) {
         }
         parallelCommands[i++] = token;
     }
-    
     return i;
 }
 
 void parse_spaces(char *command, char **parsedCommand) {
     char *token;
     int i = 0;
-    while ((token = strsep(&command, " "))) {
+    while ((token = strsep(&command, " \t"))) {
         if (strlen(token) == 0)
             continue;
         parsedCommand[i++] = token;
@@ -86,37 +130,26 @@ void parse_spaces(char *command, char **parsedCommand) {
     parsedCommand[i] = NULL;
 }
 
-void redirect_to_file(char *file) {
-    freopen(file, "w", stdout);
-    freopen(file, "w", stderr);
-
-}
-
-void redirect_to_stdout() {
-    freopen("/dev/tty", "w", stdout);
-    freopen("/dev/tty", "w", stderr);
-}
 
 int process_string(char *string, char *parsedParallel[MAX_COM][MAX_LIST]) {
     char *stringParallel[MAX_LIST];
     int parallel = parse_parallel(string, stringParallel);
-    if (parallel) {
-        for (int i = 0; i < parallel; i++) {
-            parse_spaces(stringParallel[i], parsedParallel[i]);
-        }
+    for (int i = 0; i < parallel; i++) {
+        parse_spaces(stringParallel[i], parsedParallel[i]);
     }
-    return 0;
+    return parallel;
 }
 
 int main(int argc, char *argv[]) {
     char inputString[BUFF_SIZE], *parsedParallel[MAX_COM][MAX_LIST];
+    int parallel;
     printf("wish> ");
     while (1) {
         if (take_input(inputString)) {
             continue;
         }
-        process_string(inputString, parsedParallel);
-        command_handler(parsedParallel);
+        parallel = process_string(inputString, parsedParallel);
+        command_handler(parsedParallel, parallel);
         while (wait(NULL) > 0);
         printf("wish> ");
     }
